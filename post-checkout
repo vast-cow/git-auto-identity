@@ -50,28 +50,22 @@ username=''
 name=''
 email=''
 
-# GitHub owner -> コミットユーザー情報
-# username を指定: GitHub API モード
-# name と email を指定: 直接指定モード
-case "$owner" in
-    personal-user|side-project)
-        username="personal-user"
-        ;;
-    company-org)
-        username="work-user"
-        ;;
-    company-internal)
-        name="Company Developer"
-        email="developer@example.com"
-        ;;
-    client-org)
-        name="Taro Yamada"
-        email="taro@example.com"
-        ;;
-    *)
-        exit 0
-        ;;
-esac
+# hook と同じディレクトリからマッピングを読み込む
+hook_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P) ||
+    fail "Failed to resolve hook directory"
+mapping_file="$hook_dir/github-owners.sh"
+
+[[ -f $mapping_file && -r $mapping_file ]] ||
+    fail "Mapping file not found or unreadable: $mapping_file"
+
+# shellcheck source=github-owners.sh
+source "$mapping_file" || fail "Failed to load mapping: $mapping_file"
+
+declare -F map_github_owner >/dev/null ||
+    fail "map_github_owner is not defined: $mapping_file"
+
+# 未登録の owner は何も設定せず終了
+map_github_owner "$owner" || exit 0
 
 # username の有無で設定方法を切り替える
 if [[ -n $username ]]; then

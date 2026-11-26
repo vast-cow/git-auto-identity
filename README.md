@@ -13,7 +13,7 @@ GitHub リポジトリの owner に基づき、Git のコミットユーザー�
 
 ## 必要な環境
 
-共通: `bash`、`git`、`tr`。
+共通: `bash`、`git`、`tr`、`dirname`。
 GitHub API モードのみ: `curl`、`jq`、インターネット接続。
 
 ```bash
@@ -32,38 +32,40 @@ sudo pacman -S git curl jq
 ```text
 git-hooks/
 ├── hooks/
-│   └── post-checkout
+│   ├── post-checkout       # hook 本体
+│   └── github-owners.sh    # owner マッピング
 └── README.md
 ```
 
 ## マッピング設定
 
-`hooks/post-checkout` の `case "$owner"` を編集する。owner は小文字で指定する。
+`hooks/github-owners.sh` の `map_github_owner()` 内の `case "$1"` を編集する。owner は小文字で指定する。
+`post-checkout` は自分と同じディレクトリにある `github-owners.sh` を `source` で読み込むため、
+リポジトリの作業ディレクトリに依存しない。マッピングファイル自体に実行権限は不要。
 サンプルの owner、username、名前、メールアドレスは実際に使用する値へ置き換えること。
 
 ```bash
-case "$owner" in
-    # GitHub API モード
-    personal-user|side-project)
-        username="personal-user"
-        ;;
-    company-org)
-        username="work-user"
-        ;;
-
-    # 直接指定モード
-    company-internal)
-        name="Company Developer"
-        email="developer@example.com"
-        ;;
-    client-org)
-        name="Taro Yamada"
-        email="taro@example.com"
-        ;;
-    *)
-        exit 0
-        ;;
-esac
+map_github_owner() {
+    case "$1" in
+        personal-user|side-project)
+            username="personal-user"
+            ;;
+        company-org)
+            username="work-user"
+            ;;
+        company-internal)
+            name="Company Developer"
+            email="developer@example.com"
+            ;;
+        client-org)
+            name="Taro Yamada"
+            email="taro@example.com"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
 ```
 
 | Owner | モード | 設定内容 |
@@ -103,9 +105,14 @@ company-org)
 
 ```bash
 mkdir -p "$HOME/.config/git/hooks"
-cp hooks/post-checkout "$HOME/.config/git/hooks/post-checkout"
+cp hooks/post-checkout hooks/github-owners.sh "$HOME/.config/git/hooks/"
 chmod +x "$HOME/.config/git/hooks/post-checkout"
 ```
+
+マッピングファイルは hook と同じディレクトリに配置すること。
+すでにマッピングをカスタマイズしている場合は、上記のコピーで上書きしないよう注意する。
+以降、マッピングの編集は `$HOME/.config/git/hooks/github-owners.sh` のみでよい。
+`source` は Bash コードを実行するため、信頼できるマッピングファイルのみを使用する。
 
 ### 既存リポジトリへの適用
 
@@ -132,7 +139,8 @@ git clone \
 ```bash
 mkdir -p "$HOME/.config/git/template/hooks"
 cp "$HOME/.config/git/hooks/post-checkout" \
-   "$HOME/.config/git/template/hooks/post-checkout"
+   "$HOME/.config/git/hooks/github-owners.sh" \
+   "$HOME/.config/git/template/hooks/"
 chmod +x "$HOME/.config/git/template/hooks/post-checkout"
 ```
 
@@ -142,7 +150,7 @@ chmod +x "$HOME/.config/git/template/hooks/post-checkout"
 export GIT_TEMPLATE_DIR="$HOME/.config/git/template"
 ```
 
-以降は通常の `git clone` で hook が配布される。テンプレートはコピー方式のため、変更は既存リポジトリへ自動反映されない。`core.hooksPath` が別のディレクトリに設定されている場合はそちらが優先される。一元管理したい場合はローカルの `core.hooksPath` を使用する。
+以降は通常の `git clone` で hook が配布される。テンプレートは hook 本体とマッピングファイルの両方をコピーする方式のため、変更は既存リポジトリへ自動反映されない。`core.hooksPath` が別のディレクトリに設定されている場合はそちらが優先される。一元管理したい場合はローカルの `core.hooksPath` を使用する。
 
 ## 対応する Remote URL
 
@@ -167,7 +175,8 @@ flowchart TD
     B -- Yes --> C{両方とも設定済み?}
     C -- Yes --> Z
     C -- No --> D[origin URL を解析]
-    D --> E{対応する owner?}
+    D --> M[github-owners.sh を読み込む]
+    M --> E{対応する owner?}
     E -- No --> Z
     E -- Yes --> F{username を指定?}
     F -- Yes --> G[GitHub API 取得・noreply 生成]
@@ -265,7 +274,7 @@ git config --local --unset-all user.email || true
 "$HOME/.config/git/hooks/post-checkout" HEAD HEAD 1
 ```
 
-この操作は既存のユーザー設定を削除するため、新しいマッピングが有効であることを事前に確認する。テンプレート方式の場合は、コピー済みの hook も更新すること。
+この操作は既存のユーザー設定を削除するため、新しいマッピングが有効であることを事前に確認する。テンプレート方式の場合は、コピー済みのマッピングファイルも更新すること。
 
 ## アンインストール
 
@@ -278,23 +287,27 @@ git config --local --unset-all core.hooksPath
 テンプレート方式の場合は以下を実行する。
 
 ```bash
-rm -f "$HOME/.config/git/template/hooks/post-checkout"
+rm -f "$HOME/.config/git/template/hooks/post-checkout" \
+      "$HOME/.config/git/template/hooks/github-owners.sh"
 ```
 
 コピー済みの hook は、対象リポジトリで本プロジェクトのファイルであることを確認してから削除する。
 
 ```bash
-rm -f "$(git rev-parse --git-path hooks/post-checkout)"
+rm -f "$(git rev-parse --git-path hooks/post-checkout)" \
+      "$(git rev-parse --git-path hooks/github-owners.sh)"
 ```
 
 hook を削除しても設定済みの `user.name` と `user.email` は維持される。
 
 ## エラーハンドリングと注意事項
 
+- マッピングファイルの欠落・読み込み失敗・マッピング関数の欠落時はエラー終了する（設定済みリポジトリや対象外 remote は読み込み前にスキップする）。
 - API 取得・レスポンス検証・設定値の検証・Git config 書き込み失敗時はエラー終了する。
 - API の接続タイムアウトは 5 秒、リクエスト全体は 15 秒。未認証 API にはレート制限がある。
 - hook が異常終了しても、完了済みの checkout は取り消されない。
 - GitHub の認証アカウント、SSH 鍵、コミット署名、既存コミットの情報は変更しない。
+- hook をシンボリックリンクで配置する場合も、マッピングファイルは hook の呼び出しパスと同じディレクトリに配置する。
 - 直接指定したメールアドレスを GitHub アカウントへ紐づけたい場合は、そのアカウントで利用可能なアドレスを指定する。
 - worktree 間では通常ローカル Git config が共有される。環境変数や worktree 固有設定による上書きは管理対象外。
 - `user.name` と `user.email` の書き込みはアトミックではない。
