@@ -6,19 +6,19 @@ fail() {
     exit 1
 }
 
-# ファイル単体の checkout は対象外
+# Skip file checkouts.
 [[ ${3:-0} == 1 ]] || exit 0
 
-# 両方ともローカル設定済みの場合はスキップ
+# Skip repositories where both identity settings are already set locally.
 if [[ -n $(git config --local --get user.name) &&
       -n $(git config --local --get user.email) ]]; then
     exit 0
 fi
 
-# origin の URL を取得
+# Get the URL for origin.
 remote=$(git remote get-url origin 2>/dev/null) || exit 0
 
-# GitHub remote URL の解析
+# Parse the GitHub remote URL.
 case "$remote" in
     git@github.com:*)
         path=${remote#git@github.com:}
@@ -40,17 +40,17 @@ case "$remote" in
         ;;
 esac
 
-# owner の抽出と小文字への正規化
+# Extract the owner and normalize it to lowercase.
 [[ $path =~ ^([^/]+)/[^/]+/?$ ]] || exit 0
 owner=$(printf '%s' "${BASH_REMATCH[1]}" |
     LC_ALL=C tr 'A-Z' 'a-z')
 
-# マッピングの初期化
+# Initialize the mapping variables.
 username=''
 name=''
 email=''
 
-# hook と同じディレクトリからマッピングを読み込む
+# Load the mapping from the hook's directory.
 hook_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P) ||
     fail "Failed to resolve hook directory"
 mapping_file="$hook_dir/github-owners.sh"
@@ -64,18 +64,18 @@ source "$mapping_file" || fail "Failed to load mapping: $mapping_file"
 declare -F map_github_owner >/dev/null ||
     fail "map_github_owner is not defined: $mapping_file"
 
-# 未登録の owner は何も設定せず終了
+# Skip owners without a mapping.
 map_github_owner "$owner" || exit 0
 
-# username の有無で設定方法を切り替える
+# Choose the configuration mode based on whether username is set.
 if [[ -n $username ]]; then
     mode=github-api
 
-    # 設定方式の混在を防止
+    # Reject mappings that mix API and direct settings.
     [[ -z $name && -z $email ]] ||
         fail "Specify either username or name and email: $owner"
 
-    # GitHub username のバリデーション
+    # Validate the GitHub username.
     case "$username" in
         -*|*-|*[!A-Za-z0-9-]*|*--*)
             fail "Invalid GitHub username: $username"
@@ -84,13 +84,13 @@ if [[ -n $username ]]; then
     [[ ${#username} -le 39 ]] ||
         fail "Invalid GitHub username: $username"
 
-    # API モードでのみ必要なコマンドを確認
+    # Check for the commands required in API mode.
     for cmd in curl jq; do
         command -v "$cmd" >/dev/null 2>&1 ||
             fail "Required command not found: $cmd"
     done
 
-    # GitHub REST API からユーザー情報を取得
+    # Fetch the user profile from the GitHub REST API.
     if ! response=$(curl \
         --fail \
         --silent \
@@ -103,7 +103,7 @@ if [[ -n $username ]]; then
         fail "Failed to fetch GitHub user: $username"
     fi
 
-    # プロフィール名が未設定の場合は login を使用
+    # Fall back to the login when the profile name is unset.
     if ! name=$(jq -er '
         select(.type == "User")
         | if (.name | type == "string" and length > 0)
@@ -113,7 +113,7 @@ if [[ -n $username ]]; then
         fail "Invalid GitHub user profile: $username"
     fi
 
-    # GitHub noreply メールアドレスを生成
+    # Generate the GitHub noreply email address.
     if ! email=$(jq -er '
         select(.id | type == "number" and . > 0 and . == floor)
         | select(.login | type == "string" and test("^[A-Za-z0-9-]+$"))
@@ -125,19 +125,19 @@ else
     mode=direct
 fi
 
-# どちらのモードでも設定値が揃っていることを確認
+# Verify that both identity values are present in either mode.
 [[ -n $name && -n $email ]] ||
     fail "Both user.name and user.email are required: $owner"
 
-# リポジトリのローカル Git config に反映
-# 片方だけ設定済みの場合も、両方をマッピングの値に更新する
+# Write the values to the repository's local Git configuration.
+# Update both settings from the mapping even if one is already set.
 git config --local --replace-all -- user.name "$name" ||
     fail "Failed to set user.name"
 
 git config --local --replace-all -- user.email "$email" ||
     fail "Failed to set user.email"
 
-# 設定結果を出力
+# Print the configured identity.
 printf '[post-checkout] %s (%s)\n' "$owner" "$mode"
 printf '  user.name  = %s\n' "$name"
 printf '  user.email = %s\n' "$email"

@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 
-# post-checkout から source されるマッピング定義。
-# 引数: 小文字に正規化した GitHub owner
-# 戻り値: 0 = マッピングあり、1 = マッピングなし
-# username / name / email は呼び出し元の変数に設定する。
+# Owner mappings sourced by post-checkout.
+# Takes a GitHub owner normalized to lowercase.
+# Returns 0 if a mapping exists and 1 otherwise.
+# Sets username, name, or email in the caller's scope.
 
-# GitHub owner -> コミットユーザー情報
-# username を指定: GitHub API モード
-# name と email を指定: 直接指定モード
+# Map GitHub owners to commit identities.
+# Set username for GitHub API mode.
+# Set name and email for direct mode.
 map_github_owner() {
     case "$1" in
         personal-user|side-project)

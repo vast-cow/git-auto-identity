@@ -1,23 +1,23 @@
 # GitHub Identity Auto Configuration
 
-GitHub リポジトリの owner に基づき、Git のコミットユーザー情報を自動設定する `post-checkout` hook。
-`~/.gitconfig` への設定は不要。リポジトリのローカル Git config のみを更新する。
+A `post-checkout` hook that automatically configures the Git commit identity based on the GitHub repository owner.
+The hook updates only the repository's local Git configuration. No setup in `~/.gitconfig` is required.
 
-## 特徴
+## Features
 
-- `origin` の GitHub owner に基づくアカウントの選択
-- GitHub REST API によるプロフィール名の取得と noreply アドレスの生成
-- `user.name` と `user.email` の直接指定
-- 設定済みリポジトリ、未登録 owner、GitHub 以外の remote のスキップ
-- GitHub API トークン不要、直接指定モードでは API 通信不要
+- Selects an account based on the GitHub owner of `origin`
+- Fetches the profile name from the GitHub REST API and generates a noreply email address
+- Supports setting `user.name` and `user.email` directly
+- Skips repositories with a configured identity, unmapped owners, and non-GitHub remotes
+- Runs without a GitHub API token and makes no API requests in direct mode
 
-## 必要な環境
+## Requirements
 
-共通: `bash`、`git`、`tr`、`dirname`。
-GitHub API モードのみ: `curl`、`jq`、インターネット接続。
+Both modes require `bash`, `git`, `tr`, and `dirname`.
+GitHub API mode also requires `curl`, `jq`, and an internet connection.
 
 ```bash
-# macOS（Git と curl が利用できる場合）
+# macOS (if Git and curl are already available)
 brew install jq
 
 # Debian / Ubuntu
@@ -27,22 +27,22 @@ sudo apt install git curl jq
 sudo pacman -S git curl jq
 ```
 
-## ディレクトリ構成
+## Directory Structure
 
 ```text
 git-hooks/
 ├── hooks/
-│   ├── post-checkout       # hook 本体
-│   └── github-owners.sh    # owner マッピング
+│   ├── post-checkout       # hook script
+│   └── github-owners.sh    # owner mappings
 └── README.md
 ```
 
-## マッピング設定
+## Mapping Configuration
 
-`hooks/github-owners.sh` の `map_github_owner()` 内の `case "$1"` を編集する。owner は小文字で指定する。
-`post-checkout` は自分と同じディレクトリにある `github-owners.sh` を `source` で読み込むため、
-リポジトリの作業ディレクトリに依存しない。マッピングファイル自体に実行権限は不要。
-サンプルの owner、username、名前、メールアドレスは実際に使用する値へ置き換えること。
+Edit the `case "$1"` statement in `map_github_owner()` in `hooks/github-owners.sh`. Use lowercase owner names.
+`post-checkout` uses `source` to load `github-owners.sh` from its own directory, regardless of the repository's working directory.
+The mapping file can be read without execute permission.
+Replace the sample owners, usernames, names, and email addresses with your own values.
 
 ```bash
 map_github_owner() {
@@ -68,23 +68,23 @@ map_github_owner() {
 }
 ```
 
-| Owner | モード | 設定内容 |
+| Owner | Mode | Identity |
 | --- | --- | --- |
-| personal-user / side-project | GitHub API | personal-user のプロフィール情報 |
-| company-org | GitHub API | work-user のプロフィール情報 |
-| company-internal | 直接指定 | Company Developer / developer@example.com |
-| client-org | 直接指定 | Taro Yamada / taro@example.com |
-| その他 | スキップ | 変更しない |
+| personal-user / side-project | GitHub API | Profile information for personal-user |
+| company-org | GitHub API | Profile information for work-user |
+| company-internal | Direct | Company Developer / developer@example.com |
+| client-org | Direct | Taro Yamada / taro@example.com |
+| Any other owner | Skip | No change |
 
-### GitHub API モード
+### GitHub API Mode
 
-`username` のみを指定する。GitHub REST API の `GET https://api.github.com/users/{username}` を未認証で呼び出し、`name` を取得する。プロフィール名が未設定の場合は `login` を使用する。
+Set only `username`. The hook makes an unauthenticated GitHub REST API request to `GET https://api.github.com/users/{username}` to retrieve `name`. If the profile name is unset, the hook uses `login`.
 
-`user.email` は API の `id` と `login` から `{id}+{login}@users.noreply.github.com` 形式で生成する。公開メールアドレスは使用しない。古いアカウントなどで別の noreply 形式が必要な場合は、GitHub の設定で確認のうえ直接指定モードを使用する。
+The hook generates `user.email` from the API's `id` and `login` in the form `{id}+{login}@users.noreply.github.com`. It ignores the public email address. If your account requires a different noreply format, as some older accounts do, check the address in your GitHub settings and use direct mode.
 
-### 直接指定モード
+### Direct Mode
 
-`name` と `email` の両方を指定する。`username` は指定しない。
+Set both `name` and `email` and leave `username` unset.
 
 ```bash
 company-org)
@@ -93,15 +93,15 @@ company-org)
     ;;
 ```
 
-指定値をそのまま `user.name` と `user.email` に設定する。GitHub API への通信はなく、`curl`、`jq` も不要。メールアドレスの所有権や GitHub での登録状態は検証しない。
+The hook writes the supplied values directly to `user.name` and `user.email`. This mode works without GitHub API access, `curl`, or `jq`. It does not verify email address ownership or whether the address is registered with GitHub.
 
-`username` と `name` / `email` の混在、直接指定値の不足はエラーとする。
+The hook reports an error if `username` is set alongside `name` or `email`, or if either value is missing in direct mode.
 
-## インストール
+## Installation
 
-### hook の配置
+### Install the Hook
 
-プロジェクトのルートで実行する。
+Run these commands from the project root.
 
 ```bash
 mkdir -p "$HOME/.config/git/hooks"
@@ -109,22 +109,22 @@ cp hooks/post-checkout hooks/github-owners.sh "$HOME/.config/git/hooks/"
 chmod +x "$HOME/.config/git/hooks/post-checkout"
 ```
 
-マッピングファイルは hook と同じディレクトリに配置すること。
-すでにマッピングをカスタマイズしている場合は、上記のコピーで上書きしないよう注意する。
-以降、マッピングの編集は `$HOME/.config/git/hooks/github-owners.sh` のみでよい。
-`source` は Bash コードを実行するため、信頼できるマッピングファイルのみを使用する。
+Place the mapping file in the same directory as the hook.
+If you have already customized the mapping, preserve your copy when running the commands above.
+After installation, edit the mapping in `$HOME/.config/git/hooks/github-owners.sh`.
+Use only trusted mapping files because `source` executes Bash code.
 
-### 既存リポジトリへの適用
+### Enable for an Existing Repository
 
-対象リポジトリ内で実行する。
+Run this command inside the target repository.
 
 ```bash
 git config --local core.hooksPath "$HOME/.config/git/hooks"
 ```
 
-既存の `core.hooksPath` や hook がある場合は、他の hook を無効化しないよう既存のディレクトリ・スクリプトに統合すること。
+If the repository already has a `core.hooksPath` setting or hooks, integrate the new hook into the existing directory or script to keep the other hooks active.
 
-### 新規リポジトリへの適用
+### Enable When Cloning a Repository
 
 ```bash
 git clone \
@@ -132,9 +132,9 @@ git clone \
     git@github.com:company-org/example.git
 ```
 
-### GIT_TEMPLATE_DIR による自動配布
+### Automatic Installation with GIT_TEMPLATE_DIR
 
-すべての新規リポジトリに適用したい場合は、テンプレートに hook を配置する。
+To install the hook in all new repositories, add it to a Git template.
 
 ```bash
 mkdir -p "$HOME/.config/git/template/hooks"
@@ -144,17 +144,17 @@ cp "$HOME/.config/git/hooks/post-checkout" \
 chmod +x "$HOME/.config/git/template/hooks/post-checkout"
 ```
 
-`~/.bashrc` または `~/.zshrc` に以下を追加し、シェルを再起動する。
+Add the following line to `~/.bashrc` or `~/.zshrc` and restart your shell.
 
 ```bash
 export GIT_TEMPLATE_DIR="$HOME/.config/git/template"
 ```
 
-以降は通常の `git clone` で hook が配布される。テンプレートは hook 本体とマッピングファイルの両方をコピーする方式のため、変更は既存リポジトリへ自動反映されない。`core.hooksPath` が別のディレクトリに設定されている場合はそちらが優先される。一元管理したい場合はローカルの `core.hooksPath` を使用する。
+After that, a regular `git clone` installs the hook. The template copies both the hook script and the mapping file, so later changes to the template do not propagate to existing repositories. If `core.hooksPath` points to another directory, that directory takes precedence. For centralized management, set `core.hooksPath` in each repository's local Git configuration.
 
-## 対応する Remote URL
+## Supported Remote URLs
 
-対象 remote は `origin` のみ。
+The hook checks only the `origin` remote.
 
 ```text
 git@github.com:owner/repository.git
@@ -164,57 +164,57 @@ ssh://git@github.com:22/owner/repository.git
 ssh://git@ssh.github.com:443/owner/repository.git
 ```
 
-GitHub Enterprise Server、SSH の独自 Host エイリアス、認証情報付き HTTPS URL、上記以外の形式は未対応。マッピング未登録の owner や `origin` が存在しない場合も何も変更しない。
+The hook skips GitHub Enterprise Server, custom SSH host aliases, HTTPS URLs containing credentials, and URL formats outside the list above. It also skips repositories with an unmapped owner or no `origin` remote.
 
-## 動作フロー
+## Workflow
 
 ```mermaid
 flowchart TD
-    A[post-checkout] --> B{ブランチ checkout?}
-    B -- No --> Z[終了]
-    B -- Yes --> C{両方とも設定済み?}
+    A[post-checkout] --> B{Branch checkout?}
+    B -- No --> Z[Exit]
+    B -- Yes --> C{Both settings already set?}
     C -- Yes --> Z
-    C -- No --> D[origin URL を解析]
-    D --> M[github-owners.sh を読み込む]
-    M --> E{対応する owner?}
+    C -- No --> D[Parse the origin URL]
+    D --> M[Load github-owners.sh]
+    M --> E{Matching owner?}
     E -- No --> Z
-    E -- Yes --> F{username を指定?}
-    F -- Yes --> G[GitHub API 取得・noreply 生成]
-    F -- No --> H[直接指定値を使用]
-    G --> I{取得・検証成功?}
+    E -- Yes --> F{Username set?}
+    F -- Yes --> G[Fetch GitHub profile and generate noreply address]
+    F -- No --> H[Use directly specified values]
+    G --> I{Retrieval and validation successful?}
     H --> I
-    I -- No --> X[エラー終了]
-    I -- Yes --> J[ローカル Git config に設定]
+    I -- No --> X[Exit with an error]
+    I -- Yes --> J[Update local Git configuration]
     J --> Z
 ```
 
-## 動作仕様
+## Behavior
 
-| 操作 | 動作 |
+| Operation | Hook behavior |
 | --- | --- |
-| git clone | 実行（checkout がある場合） |
-| git checkout main | 実行 |
-| git switch main | 実行 |
-| git worktree add | 実行（checkout がある場合） |
-| git checkout -- file.txt | スキップ |
-| git commit / push / fetch | 実行しない |
+| git clone | Runs if a checkout occurs |
+| git checkout main | Runs |
+| git switch main | Runs |
+| git worktree add | Runs if a checkout occurs |
+| git checkout -- file.txt | Skips |
+| git commit / push / fetch | Does not run |
 
-hook が有効化されていることが前提。
+This behavior assumes the hook is enabled.
 
-### 設定済みリポジトリ
+### Existing Identity Settings
 
-| user.name | user.email | 動作 |
+| user.name | user.email | Hook behavior |
 | --- | --- | --- |
-| 設定済み | 設定済み | スキップ |
-| 設定済み | 未設定 | 両方を設定 |
-| 未設定 | 設定済み | 両方を設定 |
-| 未設定 | 未設定 | 両方を設定 |
+| Set | Set | Skips |
+| Set | Unset | Sets both |
+| Unset | Set | Sets both |
+| Unset | Unset | Sets both |
 
-空文字列は未設定と扱う。片方だけ設定済みの場合は名前とメールアドレスの組み合わせを統一するため、設定済みの値も上書きする。グローバル設定は判定に使用しない。
+The hook treats empty values as unset. If only one setting is already set, the hook overwrites it so that the name and email address come from the same mapping. The check considers only local settings.
 
-### 設定先
+### Configuration Location
 
-リポジトリのローカル Git config に設定する。例えば直接指定モードでは次のようになる。
+The hook writes the values to the repository's local Git configuration. This is an example of what direct mode writes.
 
 ```ini
 [user]
@@ -222,14 +222,14 @@ hook が有効化されていることが前提。
     email = developer@example.com
 ```
 
-## 実行例
+## Example Runs
 
 ```bash
 git clone -c core.hooksPath="$HOME/.config/git/hooks" \
     git@github.com:company-internal/example.git
 ```
 
-出力例:
+Example output in direct mode
 
 ```text
 [post-checkout] company-internal (direct)
@@ -237,7 +237,7 @@ git clone -c core.hooksPath="$HOME/.config/git/hooks" \
   user.email = developer@example.com
 ```
 
-GitHub API モードの場合の出力例:
+Example output in GitHub API mode
 
 ```text
 [post-checkout] company-org (github-api)
@@ -245,9 +245,9 @@ GitHub API モードの場合の出力例:
   user.email = 12345678+work-user@users.noreply.github.com
 ```
 
-## 手動実行と確認
+## Run and Verify Manually
 
-対象リポジトリ内で実行する。
+Run these commands inside the target repository.
 
 ```bash
 "$HOME/.config/git/hooks/post-checkout" HEAD HEAD 1
@@ -258,15 +258,15 @@ git var GIT_AUTHOR_IDENT
 git var GIT_COMMITTER_IDENT
 ```
 
-テンプレートでコピーした hook を直接使用する場合は、以下で実行する。
+To run the hook copied from a template directly, use the following command.
 
 ```bash
 "$(git rev-parse --git-path hooks/post-checkout)" HEAD HEAD 1
 ```
 
-## 再設定
+## Reconfiguration
 
-マッピングを変更しても設定済みのリポジトリには自動反映されない。対象リポジトリで既存設定を削除したうえで再実行する。
+Mapping changes do not automatically apply to repositories with a configured identity. Remove the existing settings in the target repository and rerun the hook.
 
 ```bash
 git config --local --unset-all user.name || true
@@ -274,40 +274,40 @@ git config --local --unset-all user.email || true
 "$HOME/.config/git/hooks/post-checkout" HEAD HEAD 1
 ```
 
-この操作は既存のユーザー設定を削除するため、新しいマッピングが有効であることを事前に確認する。テンプレート方式の場合は、コピー済みのマッピングファイルも更新すること。
+Verify that the new mapping is valid before removing the existing identity settings. If you installed the hook using a template, also update the copied mapping file.
 
-## アンインストール
+## Uninstallation
 
-`core.hooksPath` を使用している場合は、対象リポジトリで以下を実行する（以前の値がある場合は復元する）。
+If you use `core.hooksPath`, run the following command in the target repository. If there was a previous value, restore it.
 
 ```bash
 git config --local --unset-all core.hooksPath
 ```
 
-テンプレート方式の場合は以下を実行する。
+If you use a template, run the following command.
 
 ```bash
 rm -f "$HOME/.config/git/template/hooks/post-checkout" \
       "$HOME/.config/git/template/hooks/github-owners.sh"
 ```
 
-コピー済みの hook は、対象リポジトリで本プロジェクトのファイルであることを確認してから削除する。
+Before deleting the copied files from a target repository, verify that they belong to this project.
 
 ```bash
 rm -f "$(git rev-parse --git-path hooks/post-checkout)" \
       "$(git rev-parse --git-path hooks/github-owners.sh)"
 ```
 
-hook を削除しても設定済みの `user.name` と `user.email` は維持される。
+Removing the hook preserves the configured `user.name` and `user.email` values.
 
-## エラーハンドリングと注意事項
+## Error Handling and Notes
 
-- マッピングファイルの欠落・読み込み失敗・マッピング関数の欠落時はエラー終了する（設定済みリポジトリや対象外 remote は読み込み前にスキップする）。
-- API 取得・レスポンス検証・設定値の検証・Git config 書き込み失敗時はエラー終了する。
-- API の接続タイムアウトは 5 秒、リクエスト全体は 15 秒。未認証 API にはレート制限がある。
-- hook が異常終了しても、完了済みの checkout は取り消されない。
-- GitHub の認証アカウント、SSH 鍵、コミット署名、既存コミットの情報は変更しない。
-- hook をシンボリックリンクで配置する場合も、マッピングファイルは hook の呼び出しパスと同じディレクトリに配置する。
-- 直接指定したメールアドレスを GitHub アカウントへ紐づけたい場合は、そのアカウントで利用可能なアドレスを指定する。
-- worktree 間では通常ローカル Git config が共有される。環境変数や worktree 固有設定による上書きは管理対象外。
-- `user.name` と `user.email` の書き込みはアトミックではない。
+- The hook exits with an error if the mapping file is missing, fails to load, or lacks the mapping function. It skips repositories with a configured identity or an unsupported remote before loading the file.
+- The hook exits with an error if it cannot fetch the API response, validate the response or configuration values, or write to the Git configuration.
+- The API connection timeout is 5 seconds, and the overall request timeout is 15 seconds. Unauthenticated API requests are subject to rate limits.
+- A completed checkout stays in effect if the hook exits with an error.
+- The hook leaves your GitHub authentication account, SSH keys, commit signing, and existing commit metadata untouched.
+- If you install the hook as a symbolic link, place the mapping file in the directory from which the hook is invoked, alongside the link.
+- To associate an email address set in direct mode with a GitHub account, use an address that the account can use.
+- Worktrees normally share the repository's local Git configuration. The hook does not manage overrides from environment variables or worktree-specific settings.
+- The hook writes `user.name` and `user.email` separately, so the two updates are not atomic.
