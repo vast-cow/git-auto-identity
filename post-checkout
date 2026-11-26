@@ -1,99 +1,95 @@
 #!/usr/bin/env bash
-set -u
-
-fail() {
-    printf 'post-checkout: %s\n' "$*" >&2
-    exit 1
-}
+set -euo pipefail
 
 # ファイル単体の checkout は対象外
 [[ ${3:-0} == 1 ]] || exit 0
 
-# origin の URL を取得
-remote_url=$(git remote get-url origin 2>/dev/null) || exit 0
+# origin の取得
+remote=$(git remote get-url origin 2>/dev/null) || exit 0
 
-# GitHub remote URL を解析
-case "$remote_url" in
-    https://github.com/*)
-        path=${remote_url#https://github.com/}
-        ;;
+# GitHub remote URL の解析
+case "$remote" in
     git@github.com:*)
-        path=${remote_url#git@github.com:}
+        path=${remote#git@github.com:}
+        ;;
+    https://github.com/*)
+        path=${remote#https://github.com/}
         ;;
     ssh://git@github.com/*)
-        path=${remote_url#ssh://git@github.com/}
+        path=${remote#ssh://git@github.com/}
         ;;
     ssh://git@github.com:22/*)
-        path=${remote_url#ssh://git@github.com:22/}
+        path=${remote#ssh://git@github.com:22/}
         ;;
     ssh://git@ssh.github.com:443/*)
-        path=${remote_url#ssh://git@ssh.github.com:443/}
+        path=${remote#ssh://git@ssh.github.com:443/}
         ;;
     *)
         exit 0
         ;;
 esac
 
-# owner/repository から owner を抽出
+# owner の抽出・正規化
 [[ $path =~ ^([^/]+)/[^/]+/?$ ]] || exit 0
-
 owner=$(printf '%s' "${BASH_REMATCH[1]}" |
     LC_ALL=C tr 'A-Z' 'a-z')
 
-# GitHub username のバリデーション
-valid_username() {
-    [[ $1 =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?$ &&
-       $1 != *--* ]]
-}
+# Owner -> GitHub username
+case "$owner" in
+    personal-user|side-project)
+        username="personal-user"
+        ;;
+    company-org|company-dev)
+        username="work-user"
+        ;;
+    *)
+        exit 0
+        ;;
+esac
 
-valid_username "$owner" || exit 0
+# GitHub username の検証
+case "$username" in
+    ''|-*|*-|*[!A-Za-z0-9-]*|*--*)
+        printf 'Invalid GitHub username: %s\n' "$username" >&2
+        exit 1
+        ;;
+esac
 
-# owner に対応する GitHub username を取得
-username=$(git config --global --get \
-    "github-owner.${owner}.username") || exit 0
-
-valid_username "$username" ||
-    fail "Invalid GitHub username: $username"
+[[ ${#username} -le 39 ]] || exit 1
 
 # 依存コマンドの確認
 for cmd in curl jq; do
-    command -v "$cmd" >/dev/null 2>&1 ||
-        fail "Required command not found: $cmd"
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+        printf 'Required command not found: %s\n' "$cmd" >&2
+        exit 1
+    fi
 done
 
-# GitHub API からユーザー情報を取得
+# GitHub API
 response=$(curl --fail --silent --show-error --location \
     --connect-timeout 5 --max-time 15 \
     -H 'Accept: application/vnd.github+json' \
-    "https://api.github.com/users/${username}") ||
-    fail "Failed to fetch GitHub user: $username"
+    "https://api.github.com/users/${username}")
 
-# 名前を取得（未設定の場合は login）
+# 名前の取得
 name=$(jq -er '
     select(.type == "User")
     | if (.name | type == "string" and length > 0)
       then .name else .login end
     | select(type == "string" and length > 0)
-' <<< "$response") ||
-    fail "Invalid GitHub user profile: $username"
+' <<< "$response")
 
-# GitHub noreply メールアドレスを生成
+# noreply メールアドレスの生成
 email=$(jq -er '
     select(.id | type == "number" and . > 0)
-    | select(.login | type == "string"
-        and test("^[A-Za-z0-9-]+$"))
+    | select(.login | type == "string" and length > 0)
     | "\(.id)+\(.login)@users.noreply.github.com"
-' <<< "$response") ||
-    fail "Invalid GitHub user profile: $username"
+' <<< "$response")
 
-# リポジトリのローカル設定に反映
-git config --local --replace-all -- user.name "$name" ||
-    fail "Failed to set user.name"
+# ローカル設定への反映
+git config --local --replace-all -- user.name "$name"
+git config --local --replace-all -- user.email "$email"
 
-git config --local --replace-all -- user.email "$email" ||
-    fail "Failed to set user.email"
-
-# 設定結果を出力
 printf '[post-checkout] %s -> %s\n' "$owner" "$username"
 printf '  user.name  = %s\n' "$name"
 printf '  user.email = %s\n' "$email"
