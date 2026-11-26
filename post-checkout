@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# エラーメッセージを出力して終了
 fail() {
     printf '[post-checkout] ERROR: %s\n' "$*" >&2
     exit 1
@@ -10,7 +9,7 @@ fail() {
 # ファイル単体の checkout は対象外
 [[ ${3:-0} == 1 ]] || exit 0
 
-# user.name と user.email が設定済みの場合はスキップ
+# 両方ともローカル設定済みの場合はスキップ
 if [[ -n $(git config --local --get user.name) &&
       -n $(git config --local --get user.email) ]]; then
     exit 0
@@ -41,78 +40,103 @@ case "$remote" in
         ;;
 esac
 
-# GitHub owner の抽出
+# owner の抽出と小文字への正規化
 [[ $path =~ ^([^/]+)/[^/]+/?$ ]] || exit 0
-
-# owner を小文字に正規化
 owner=$(printf '%s' "${BASH_REMATCH[1]}" |
     LC_ALL=C tr 'A-Z' 'a-z')
 
-# GitHub owner -> GitHub username のマッピング
+# マッピングの初期化
+username=''
+name=''
+email=''
+
+# GitHub owner -> コミットユーザー情報
+# username を指定: GitHub API モード
+# name と email を指定: 直接指定モード
 case "$owner" in
     personal-user|side-project)
         username="personal-user"
         ;;
-    company-org|company-dev)
+    company-org)
         username="work-user"
+        ;;
+    company-internal)
+        name="Company Developer"
+        email="developer@example.com"
+        ;;
+    client-org)
+        name="Taro Yamada"
+        email="taro@example.com"
         ;;
     *)
         exit 0
         ;;
 esac
 
-# GitHub username のバリデーション
-case "$username" in
-    ''|-*|*-|*[!A-Za-z0-9-]*|*--*)
+# username の有無で設定方法を切り替える
+if [[ -n $username ]]; then
+    mode=github-api
+
+    # 設定方式の混在を防止
+    [[ -z $name && -z $email ]] ||
+        fail "Specify either username or name and email: $owner"
+
+    # GitHub username のバリデーション
+    case "$username" in
+        -*|*-|*[!A-Za-z0-9-]*|*--*)
+            fail "Invalid GitHub username: $username"
+            ;;
+    esac
+    [[ ${#username} -le 39 ]] ||
         fail "Invalid GitHub username: $username"
-        ;;
-esac
 
-[[ ${#username} -le 39 ]] ||
-    fail "Invalid GitHub username: $username"
+    # API モードでのみ必要なコマンドを確認
+    for cmd in curl jq; do
+        command -v "$cmd" >/dev/null 2>&1 ||
+            fail "Required command not found: $cmd"
+    done
 
-# 依存コマンドの確認
-for cmd in curl jq; do
-    command -v "$cmd" >/dev/null 2>&1 ||
-        fail "Required command not found: $cmd"
-done
+    # GitHub REST API からユーザー情報を取得
+    if ! response=$(curl \
+        --fail \
+        --silent \
+        --show-error \
+        --location \
+        --connect-timeout 5 \
+        --max-time 15 \
+        --header 'Accept: application/vnd.github+json' \
+        "https://api.github.com/users/${username}"); then
+        fail "Failed to fetch GitHub user: $username"
+    fi
 
-# GitHub REST API からユーザー情報を取得
-if ! response=$(curl \
-    --fail \
-    --silent \
-    --show-error \
-    --location \
-    --connect-timeout 5 \
-    --max-time 15 \
-    --header 'Accept: application/vnd.github+json' \
-    "https://api.github.com/users/${username}"); then
-    fail "Failed to fetch GitHub user: $username"
+    # プロフィール名が未設定の場合は login を使用
+    if ! name=$(jq -er '
+        select(.type == "User")
+        | if (.name | type == "string" and length > 0)
+          then .name else .login end
+        | select(type == "string" and length > 0)
+    ' <<< "$response"); then
+        fail "Invalid GitHub user profile: $username"
+    fi
+
+    # GitHub noreply メールアドレスを生成
+    if ! email=$(jq -er '
+        select(.id | type == "number" and . > 0 and . == floor)
+        | select(.login | type == "string" and test("^[A-Za-z0-9-]+$"))
+        | "\(.id)+\(.login)@users.noreply.github.com"
+    ' <<< "$response"); then
+        fail "Invalid GitHub user profile: $username"
+    fi
+else
+    mode=direct
 fi
 
-# ユーザー名を取得
-# プロフィール名が未設定の場合は login を使用
-if ! name=$(jq -er '
-    select(.type == "User")
-    | if (.name | type == "string" and length > 0)
-      then .name
-      else .login
-      end
-    | select(type == "string" and length > 0)
-' <<< "$response"); then
-    fail "Invalid GitHub user profile: $username"
-fi
+# どちらのモードでも設定値が揃っていることを確認
+[[ -n $name && -n $email ]] ||
+    fail "Both user.name and user.email are required: $owner"
 
-# GitHub noreply メールアドレスを生成
-if ! email=$(jq -er '
-    select(.id | type == "number" and . > 0)
-    | select(.login | type == "string" and length > 0)
-    | "\(.id)+\(.login)@users.noreply.github.com"
-' <<< "$response"); then
-    fail "Invalid GitHub user profile: $username"
-fi
-
-# リポジトリのローカル Git config に設定
+# リポジトリのローカル Git config に反映
+# 片方だけ設定済みの場合も、両方をマッピングの値に更新する
 git config --local --replace-all -- user.name "$name" ||
     fail "Failed to set user.name"
 
@@ -120,6 +144,6 @@ git config --local --replace-all -- user.email "$email" ||
     fail "Failed to set user.email"
 
 # 設定結果を出力
-printf '[post-checkout] %s -> %s\n' "$owner" "$username"
+printf '[post-checkout] %s (%s)\n' "$owner" "$mode"
 printf '  user.name  = %s\n' "$name"
 printf '  user.email = %s\n' "$email"
